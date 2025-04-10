@@ -51,20 +51,20 @@ class LLMService(ChatGPT):
     
 
     
-    def prompt(self,user_prompt : str,previous_messages : list[dict[str,str]]=[]):
+    def prompt(self,user_prompt : str,previous_messages : list[dict[str,str]]=None):
         
         messages=[
             {"role": "developer","content": "You are a shy and reclusive , basically a deredere girl"}
         ]
         
-        if previous_messages.__len__()>0:
+        if previous_messages is not None:
             previous_messages.extend(messages)
             messages=previous_messages
 
         messages.append({"role": "user","content": user_prompt})
 
         completion= self.client.chat.completions.create(model=self.model,modalities=['text'],messages=messages)
-
+        
         choices=completion.choices
         chonsen_index=random.randint(0,choices.__len__()-1)
         message=choices[chonsen_index].message

@@ -52,27 +52,26 @@ class ShirokoClient(commands.Bot):
     async def on_message(self,message : discord.Message):
         try:
             if message.author==self.user:
-                new_conversation=CreateConversation(role='assistant',content=message.content,user_id=message.author.id)
+                new_conversation=Conversation(role='assistant',content=message.content,user_id=message.author.id)
                 await new_conversation.create()
                 return
+            
+            audio_file=None
+            response=''
             async with message.channel.typing():
-                today_midnight=datetime.now(tz=timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0)
-                end_of_day=datetime.now(tz=timezone.utc).replace(hour=23,minute=59,second=59,microsecond=0)
-                previous_messages=await CreateConversation.find({"created_at": {"gte": today_midnight.isoformat()},
-                                                                 "lte": end_of_day.isoformat()}
-                                                                 ).project(Conversation).sort('-created_at').to_list()
-                if previous_messages.__len__()>0:
-                    previous_messages=list(map(lambda item: item.model_dump(include=['role','content']),previous_messages))
+                previous_messages=await Conversation.get_all_from_today()
+                self.logger.info(previous_messages)
                 response=self.llm.prompt(message.content,previous_messages)
                 tts_audio=self.tts_service.tts(response)
                 async with AsyncRVCService(self.logger) as rvc:
                     await rvc.load_model()
                     character_audio, mime_type= await rvc.convert_file(tts_audio)
-                    audio_file=discord.File(fp=io.BytesIO(character_audio),filename='response.wav')
-                    new_message=CreateConversation(role='user',content=message.content,user_id=message.author.id)
+                    new_message=Conversation(role='user',content=message.content,user_id=message.author.id)
                     new_conversation=await new_message.create()
+                    
+                    audio_file=discord.File(fp=io.BytesIO(character_audio),filename=f'{new_conversation.id}.wav')
                     self.logger.debug(f'New conversation: {new_conversation.model_dump_json()}')
-                    await message.channel.send(response,file=audio_file,tts=True)
+            await message.channel.send(response,file=audio_file,tts=True)
         except Exception as e:
             sent_message=await message.channel.send('```ansi\n\u001b[0;30m\u001b[0;47 An unexpected error occored please contact support```')
             await sent_message.add_reaction('😵')
