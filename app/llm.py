@@ -12,7 +12,7 @@ OpenAITTSVoices=t.Literal['alloy', 'ash', 'coral', 'echo', 'fable', 'onyx', 'nov
 AudioFormat=t.Literal['mp3', 'opus', 'aac', 'wav']
 class ChatGPT():
     
-    def __init__(self,logger : Logger,model : OpenAIModels | OpenAITTSModels='gpt-4o-audio-preview-2024-12-17'):
+    def __init__(self,logger : Logger,model : OpenAIModels | OpenAITTSModels='gpt-4.1'):
         
         self.API_KEY=os.getenv('OPENAI_API_KEY')
         self.model=model
@@ -37,34 +37,31 @@ class LLMService(ChatGPT):
     def __new__(cls,*args,**kwargs) :
         if cls.__instance__ is None:
             cls.__instance__=super().__new__(cls)
-            # cls.__instance__._set_system_prompt()
+            cls.__instance__._set_system_prompt()
             
         
         
         return cls.__instance__
     
     
-    # def _set_system_prompt(self):
-    #     with open('static/shiroko_prompt.md','r') as f:
-    #         self.system_prompt=f.read()
+    def _set_system_prompt(self):
+        with open('static/shiroko_prompt.md','r') as f:
+            self.system_prompt=f.read()
     
     
 
     
-    def prompt(self,user_prompt : str,previous_messages : list[dict[str,str]]=None):
+    def prompt(self,user_prompt : str):
         
         messages=[
-            {"role": "developer","content": "You are a shy and reclusive , basically a deredere girl"}
+            {"role": "developer","content": self.system_prompt}
         ]
-        
-        if previous_messages is not None:
-            previous_messages.extend(messages)
-            messages=previous_messages
+
 
         messages.append({"role": "user","content": user_prompt})
 
         completion= self.client.chat.completions.create(model=self.model,modalities=['text'],messages=messages)
-        
+        self.logger.critical(completion)
         choices=completion.choices
         chonsen_index=random.randint(0,choices.__len__()-1)
         message=choices[chonsen_index].message

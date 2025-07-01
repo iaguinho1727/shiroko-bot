@@ -7,7 +7,8 @@ from app.database import Database
 from app.schema import *
 from datetime import timedelta
 from discord.ext import commands
-
+import traceback
+import uuid
 from app.debug import bk,start_debug_session
 class ShirokoClient(commands.Bot):
     
@@ -43,6 +44,9 @@ class ShirokoClient(commands.Bot):
         try:
             await self.db.init()
             self.logger.info('Conected to the database')
+            async with AsyncRVCService(self.logger) as rvc:
+                    await rvc.load_model('shiroko')
+                    self.logger.info('Loaded RVC model')
         except Exception as e:
             self.logger.critical(e)
             self.logger.critical(f'Failed to conect to the databases : {self.db.URL}')
@@ -51,29 +55,27 @@ class ShirokoClient(commands.Bot):
         
     async def on_message(self,message : discord.Message):
         try:
+            conversation_channel=await ConversationChannel.find_or_new(message.channel)
             if message.author==self.user:
-                new_conversation=Conversation(role='assistant',content=message.content,user_id=message.author.id)
-                await new_conversation.create()
+                new_conversation=Conversation(content=message.content,author=Origin.create(message.author))
+                await conversation_channel.add_conversation(new_conversation)
                 return
             
             audio_file=None
             response=''
             async with message.channel.typing():
-                previous_messages=await Conversation.get_all_from_today()
-                self.logger.info(previous_messages)
-                response=self.llm.prompt(message.content,previous_messages)
+                response=self.llm.prompt(conversation_channel.model_dump_json())
+                new_conversation=Conversation(content=response,author="chatbot")
+                await conversation_channel.add_conversation(new_conversation)
                 tts_audio=self.tts_service.tts(response)
                 async with AsyncRVCService(self.logger) as rvc:
-                    await rvc.load_model()
+                    #await rvc.load_model('shiroko')
                     character_audio, mime_type= await rvc.convert_file(tts_audio)
-                    new_message=Conversation(role='user',content=message.content,user_id=message.author.id)
-                    new_conversation=await new_message.create()
-                    
-                    audio_file=discord.File(fp=io.BytesIO(character_audio),filename=f'{new_conversation.id}.wav')
+                    audio_file=discord.File(fp=io.BytesIO(character_audio),filename=f'{uuid.uuid4()}.wav')
                     self.logger.debug(f'New conversation: {new_conversation.model_dump_json()}')
-            await message.channel.send(response,file=audio_file,tts=True)
+            await message.reply(response,file=audio_file,tts=True)
         except Exception as e:
-            sent_message=await message.channel.send('```ansi\n\u001b[0;30m\u001b[0;47 An unexpected error occored please contact support```')
+            sent_message=await message.reply('```ansi\n\u001b[0;30m\u001b[0;47 An unexpected error occured please contact support```')
             await sent_message.add_reaction('😵')
-            self.logger.error(e)
+            self.logger.error(traceback.print_exception(e))
             return

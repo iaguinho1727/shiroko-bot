@@ -6,7 +6,7 @@ from app.database import Database
 import os
 load_dotenv('.env')      
 logger=logging.getLogger('discord.client')
-llm=LLMService(model='gpt-3.5-turbo-0125',logger=logger)
+llm=LLMService(model='gpt-4.1-mini',logger=logger)
 intents=discord.Intents(messages=True,message_content=True)
 
 tts=OpenAITTSService()
