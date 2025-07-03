@@ -1,13 +1,13 @@
 FROM python:3.10.14 as backend
 
-
+RUN apt-get update && apt-get install -y ffmpeg libffi-dev libnacl-dev python3-dev
 
 WORKDIR /app
 
 COPY requirements.txt .
 COPY . .
 
-RUN pip3 install --upgrade pip && pip3 install -r requirements.txt 
+RUN pip3 install --upgrade pip && pip3 install -r requirements.txt && pip3 install -U discord.py[voice]
 
 ENTRYPOINT pip3 install -r requirements.txt && python3 -Xfrozen_modules=off .
 

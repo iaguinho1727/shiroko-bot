@@ -11,6 +11,11 @@ services:
     ports:
       - $RVC_PORT:$RVC_PORT
     networks: [ shiroko-net ]
+    healthcheck:
+      test: curl http://localhost:$RVC_PORT/params
+      timeout: 30s
+      retries: 5
+      start_period: 30s
     # deploy:
     #   resources:
     #     reservations:
@@ -56,7 +61,7 @@ services:
       database:
         condition: service_healthy
       rvc:
-        condition: service_started
+        condition: service_healthy
       
          
   

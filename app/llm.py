@@ -57,11 +57,10 @@ class LLMService(ChatGPT):
             {"role": "developer","content": self.system_prompt}
         ]
 
-
+        self.logger.info(user_prompt)
         messages.append({"role": "user","content": user_prompt})
 
         completion= self.client.chat.completions.create(model=self.model,modalities=['text'],messages=messages)
-        self.logger.critical(completion)
         choices=completion.choices
         chonsen_index=random.randint(0,choices.__len__()-1)
         message=choices[chonsen_index].message

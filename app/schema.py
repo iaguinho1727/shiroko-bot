@@ -1,5 +1,5 @@
-from beanie import Document, Indexed, init_beanie
-from discord import DMChannel, GroupChannel, TextChannel,User,Member
+from beanie import Document, Indexed, PydanticObjectId, init_beanie
+from discord import DMChannel, GroupChannel, Message, TextChannel,User,Member
 from pydantic import BaseModel, ConfigDict, Field
 import typing as t
 from datetime import datetime,timezone
@@ -16,7 +16,7 @@ class UpdateAt(BaseModel):
     updated_at : datetime=Field(default_factory=lambda : datetime.now(tz=timezone.utc))
 
 class Origin(BaseModel):
-    id: str | int
+    id : int
     name: str
 
     @staticmethod
@@ -28,14 +28,30 @@ class Origin(BaseModel):
             return origin.name
     
     @classmethod
-    def create(cls,origin : OriginType):
-        return Origin(id=origin.id,name=cls._get_origin_channel_name(origin))
+    def create(cls,origin : OriginType | str):
+        origin_name=origin
+        if isinstance(origin,OriginType):
+            origin_name=cls._get_origin_channel_name(origin)
+        return Origin(id=origin.id,name=origin_name)
 
 
 
 class Conversation(CreatedAt):
+    id : int | UUID=Field(default_factory=lambda :uuid4())   
     author  : t.Union[Origin,str]
     content: str
+    reference: t.Optional["Conversation"]=None
+    mentions : t.Optional[t.List[Origin]]=[]  
+
+    @staticmethod
+    def create(message : Message):
+        mentions=[  ]
+        new_origin=Origin(id=message.author.id,name=message.author.name)
+        for mention in message.mentions:
+            mentions.append(Origin(id=mention.id,name=mention.name))
+        return Conversation(id=message.author.id,author=new_origin,content=message.content,mentions=mentions)
+    
+    
 
 
 

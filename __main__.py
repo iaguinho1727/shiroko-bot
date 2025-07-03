@@ -7,8 +7,7 @@ import os
 load_dotenv('.env')      
 logger=logging.getLogger('discord.client')
 llm=LLMService(model='gpt-4.1-mini',logger=logger)
-intents=discord.Intents(messages=True,message_content=True)
-
+intents=discord.Intents(messages=True,message_content=True,voice_states=True,guild_messages=True,guilds=True)
 tts=OpenAITTSService()
 db=Database()
 client=ShirokoClient(intents=intents,logger=logger,llm=llm,tts=tts,db=db)
