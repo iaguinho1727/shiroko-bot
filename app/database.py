@@ -19,5 +19,5 @@ class Database:
         client = AsyncIOMotorClient(self.URL)
 
         # Init beanie with the Product document class
-        await init_beanie(database=client.shiroko, document_models=[ConversationChannel])
+        await init_beanie(database=client.shiroko, document_models=[Conversation])
 

@@ -5,6 +5,7 @@ import random
 import typing as t
 import base64
 from app.schema import *
+import json
 from logging import Logger
 OpenAIModels=t.Literal['gpt-4', 'gpt-3.5-turbo']
 OpenAITTSModels=t.Literal['tts-1','tts-1-hd']   
@@ -38,6 +39,7 @@ class LLMService(ChatGPT):
         if cls.__instance__ is None:
             cls.__instance__=super().__new__(cls)
             cls.__instance__._set_system_prompt()
+            cls.__instance__._set_tools()
             
         
         
@@ -47,22 +49,29 @@ class LLMService(ChatGPT):
     def _set_system_prompt(self):
         with open('static/shiroko_prompt.md','r') as f:
             self.system_prompt=f.read()
+
+    def _set_tools(self):
+        with open('static/tools.json','r') as f:
+            content=f.read()
+            self.tools=json.loads(content)
+
     
     
 
     
-    def prompt(self,user_prompt : str):
-        
+    async def prompt(self):
+        all_conversations=[ item.model_dump_json() for item in await Conversation.all().to_list()]
         messages=[
             {"role": "developer","content": self.system_prompt}
         ]
+        self.logger.info(f'Prompt: {all_conversations.__str__()}')
 
-        self.logger.info(user_prompt)
-        messages.append({"role": "user","content": user_prompt})
+        messages.append({"role": "user","content": all_conversations.__str__()})
 
-        completion= self.client.chat.completions.create(model=self.model,modalities=['text'],messages=messages)
+        completion= self.client.chat.completions.create(model=self.model,parallel_tool_calls=False,modalities=['text'],messages=messages,tools=self.tools)
         choices=completion.choices
         chonsen_index=random.randint(0,choices.__len__()-1)
-        message=choices[chonsen_index].message
-        return message.content
+        the_chosen=choices[chonsen_index]
+        message=the_chosen.message
+        return message.tool_calls[0].function
 

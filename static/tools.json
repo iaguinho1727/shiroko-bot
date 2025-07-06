@@ -1,0 +1,71 @@
+[
+    {
+        "type": "function",
+        "function":{
+            "name": "_reply",
+            "description": "Reply to the message of a user in a specific Discord Channel",
+            "parameters":{
+                "type": "object",
+                "properties":{
+                    "channel_id":{
+                        "type": "number"
+                    },
+                    "message_id": {
+                        "type": "number"
+                    },
+                    "content":{
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "channel_id",
+                    "message_id",
+                    "content"
+                ],
+                "additionalProperties": false
+
+            },
+            "strict": true
+        }
+    },
+
+    {
+        "type": "function",
+        "function":{
+            "name": "_send_message",
+            "description": "Send a message to a specific Discord Channel",
+            "parameters":{
+                "type": "object",
+                "properties":{
+                    "target_message_id":{
+                        "type": "number"
+                    },
+                    "content":{
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "target_message_id",
+                    "content"
+                ],
+                "additionalProperties": false
+
+            },
+            "strict": true
+        }
+    },
+
+    {
+        "type": "function",
+        "function":{
+            "name": "_do_nothing",
+            "description": "Do Nothing",
+           "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            },
+            "strict": true
+        }
+    }
+]

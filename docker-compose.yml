@@ -55,6 +55,12 @@ services:
     networks: [shiroko-net]
     environment:
       TZ: $TZ
+    develop:
+      watch:
+        - action: sync+restart
+          target: app
+          path: app
+
     
     
     depends_on:

@@ -8,6 +8,7 @@ from app.schema import *
 from datetime import timedelta
 from discord.ext import commands
 import traceback
+import json
 import uuid
 from app.debug import bk,start_debug_session
 class ShirokoClient(commands.Bot):
@@ -18,6 +19,7 @@ class ShirokoClient(commands.Bot):
         self.llm=llm
         self.tts_service=tts
         self.db=db
+     
 
 
 
@@ -104,46 +106,68 @@ class ShirokoClient(commands.Bot):
             exit(1)
         self.logger.info('Shiroko Started')
 
-    async def _talk(self,conversation_channel : ConversationChannel):
-        response=self.llm.prompt(conversation_channel.model_dump_json())
-        if response=='NULL':
+    async def _talk(self):
+        function_calls=await self.llm.prompt()
+        if function_calls is None or function_calls.name.__contains__('nothing'):
             return False
-        tts_audio=self.tts_service.tts(response)
+        function_arguments=json.loads(function_calls.arguments)
+        content=function_arguments.get('content')
+        if content is None:
+            return False
+        tts_audio=self.tts_service.tts(content)
         async with AsyncRVCService(self.logger) as rvc:
                     character_audio, mime_type= await rvc.convert_file(tts_audio)
-        return (response, character_audio, mime_type)
+        audio_file=discord.File(fp=io.BytesIO(character_audio),filename=f'{uuid.uuid4()}.wav')
+        chosen_function=getattr(self,function_calls.name)
+        self.logger.info(f'Calling {chosen_function.__name__} with arguments {function_arguments}')
+        return await chosen_function(**function_arguments,audio=audio_file)
+
 
     async def _handle_error(self,exception : Exception,message : discord.Message):
-        sent_message=await message.reply('```ansi\n\u001b[0;30m\u001b[0;47 An unexpected error occured please contact support```')
+        sent_message=await message.reply('```An unexpected error occured please contact support```')
         await sent_message.add_reaction('😵')
         self.logger.error(traceback.print_exception(exception))
+
+    async def _reply(self,message_id : int,channel_id : int,content: str,audio : discord.File):
+        target_channel=self.get_channel(channel_id)
+        if target_channel is None:
+            self.logger.error(f'Channel {channel_id} not found')
+            return
+        target_message=target_channel.get_partial_message(message_id)
+        if target_message is None:
+            self.logger.error(f'Message {message_id} not found')
+            return
+        self.logger.info(target_message)
+        sent_message=await target_message.reply(content,file=audio)
+        return (content,sent_message)
+
+
+    async def _send_message(self,channel_id : int, content : str,audio : discord.File):
+        target_channel=self.get_channel(channel_id)
+        if target_channel is None:
+            self.logger.error(f'Channel {channel_id} not found')
+            return
+        sent_message=await target_channel.send(content,file=audio)
+        return (content,sent_message)
+
+
     
     async def on_message(self,message : discord.Message):
         try:
             if message.author==self.user:
                 return
-            conversation_channel=await ConversationChannel.find_or_new(message.channel)
-            new_user_conversation=Conversation.create(message)
-            reference=message.reference
-            
-            if reference is not None:
-                reference_message=reference.resolved
-                reference_conversation= Conversation.create(reference_message)
-                new_user_conversation.reference=reference_conversation
-            await conversation_channel.add_conversation(new_user_conversation)
-            audio_file=None
-            chatbot_response=''
-            chatbot_result= await self._talk(conversation_channel)
-            if chatbot_result==False:
-                return
-            
-            chatbot_response,character_audio,mime_type=chatbot_result
+            await Conversation.create(message)
             async with message.channel.typing():
-                new_conversation=Conversation(content=chatbot_response,author="chatbot")
-                await conversation_channel.add_conversation(new_conversation)
-                audio_file=discord.File(fp=io.BytesIO(character_audio),filename=f'{uuid.uuid4()}.wav')
-                #self.logger.debug(f'New conversation: {new_conversation.model_dump_json()}')
-            await message.reply(chatbot_response,file=audio_file)
+                bot_response=await self._talk()
+                if bot_response==False:
+                    self.logger.info('Bot chose to do nothing')
+                    return
+                content,sent_message=bot_response
+                await Conversation.create_chatbot_conversation(sent_message,content)
+                
+               
+            
+            
         except Exception as e:
             await self._handle_error(e,message)
             return

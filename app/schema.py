@@ -1,13 +1,12 @@
 from beanie import Document, Indexed, PydanticObjectId, init_beanie
-from discord import DMChannel, GroupChannel, Message, TextChannel,User,Member
+from discord import DMChannel, GroupChannel, Message, TextChannel,User,Member,VoiceChannel
 from pydantic import BaseModel, ConfigDict, Field
 import typing as t
 from datetime import datetime,timezone
 from uuid import *
 from beanie.operators import GTE,LTE,And
-
-from app.dto import ConversationChannelDTO, ConversationDTO
-OriginType= t.Union[DMChannel, TextChannel, GroupChannel]
+from enum import Enum
+ChannelTypes= t.Union[DMChannel, TextChannel, GroupChannel,VoiceChannel]
 
 class CreatedAt(BaseModel):
     created_at : datetime=Field(default_factory=lambda :datetime.now(tz=timezone.utc))
@@ -15,104 +14,112 @@ class CreatedAt(BaseModel):
 class UpdateAt(BaseModel):
     updated_at : datetime=Field(default_factory=lambda : datetime.now(tz=timezone.utc))
 
+
+class OriginType(Enum):
+    TEXT_CHANNEL='text_channel'
+    GROUP_CHANNEL='group_channel'
+    DM_CHANNEL='dm'
+    VOICE_CHANNEL='voice_channel'
+    OTHER='other'
+
+    @staticmethod
+    def get_origin_type_from_channel(channel: Message.channel):
+        if isinstance(channel,TextChannel):
+            return OriginType.TEXT_CHANNEL
+        elif isinstance(channel,GroupChannel):
+            return OriginType.GROUP_CHANNEL
+        elif isinstance(channel,DMChannel):
+            return OriginType.DM_CHANNEL
+        elif isinstance(channel,VoiceChannel):
+            return OriginType.VOICE_CHANNEL
+        return OriginType.OTHER
+
+
+class Author(BaseModel):
+    id: int
+    name: str
+
 class Origin(BaseModel):
     id : int
     name: str
+    type: OriginType=OriginType.OTHER
+    server_name: t.Optional[str]=None
 
     @staticmethod
-    def _get_origin_channel_name(origin: OriginType):
+    def _get_origin_channel_name(origin: ChannelTypes):
         
         if isinstance(origin,DMChannel):
             return origin.me.name
         else:
             return origin.name
+        
+
     
     @classmethod
-    def create(cls,origin : OriginType | str):
+    def create(cls,origin : ChannelTypes | str):
         origin_name=origin
-        if isinstance(origin,OriginType):
+        type=OriginType.get_origin_type_from_channel(origin)
+
+        server_name=None
+        if isinstance(origin,ChannelTypes):
             origin_name=cls._get_origin_channel_name(origin)
-        return Origin(id=origin.id,name=origin_name)
+        if type==OriginType.TEXT_CHANNEL:
+            server_name=origin.guild.name
+        return Origin(id=origin.id,name=origin_name,type=type,server_name=server_name)
 
 
 
-class Conversation(CreatedAt):
-    id : int | UUID=Field(default_factory=lambda :uuid4())   
-    author  : t.Union[Origin,str]
+class Conversation(Document,CreatedAt):
+    id : int
+    author  : t.Union[Author,str]
     content: str
     reference: t.Optional["Conversation"]=None
-    mentions : t.Optional[t.List[Origin]]=[]  
-
-    @staticmethod
-    def create(message : Message):
-        mentions=[  ]
-        new_origin=Origin(id=message.author.id,name=message.author.name)
-        for mention in message.mentions:
-            mentions.append(Origin(id=mention.id,name=mention.name))
-        return Conversation(id=message.author.id,author=new_origin,content=message.content,mentions=mentions)
-    
-    
-
-
-
-
-
-class ConversationChannel(Document,CreatedAt):
-    #model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    conversations: t.List[Conversation]=[]
-    origin : Origin
-
-    # @staticmethod
-    # async def get_all_from_today():
-    #     today_midnight=datetime.now(tz=timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0)
-    #     end_of_day=datetime.now(tz=timezone.utc).replace(hour=23,minute=59,second=59,microsecond=0)
-    #     condition=And(GTE(Conversation.conversations.created_at,today_midnight),
-    #                   LTE(ChatMessage.created_at,end_of_day))
-    #     previous_messages=await ChatMessage.find(condition).sort('-created_at').to_list()
-        
-    #     if previous_messages.__len__()>0:
-    #         return list(map(lambda item: item.model_dump(include=['role','content']),previous_messages))
-    #     return None
-
-   
-
+    mentions : t.Optional[t.List[Author]]=[] 
+    origin: Origin
 
     @classmethod
-    async def find_or_new(cls,origin_type : OriginType):
-        existing_conversation=await ConversationChannel.find_one(ConversationChannel.origin.id==origin_type.id)
+    async def find_or_new(cls,message : Message):
+        existing_conversation=await Conversation.find_one(Conversation.origin.id==message.channel.id)
         if existing_conversation is not None:
             return existing_conversation
      
-        new_conversation_channel=ConversationChannel(origin=Origin.create(origin_type),conversations=[])
+        new_conversation_channel=Conversation(message)
         await new_conversation_channel.insert()
         return new_conversation_channel
+
+    @staticmethod
+    async def create(message : Message,save=True):
+        mentions=[  ]
+
+        new_author=Author(id=message.author.id,name=message.author.name)
+        for mention in message.mentions:
+            mentions.append(Author(id=mention.id,name=mention.name))
+        new_origin=Origin.create(message.channel)
+        new_conversation=Conversation(id=message.id,author=new_author,content=message.content,mentions=mentions,origin=new_origin)
+        if message.reference is not None and message.reference.resolved is not None:
+            reference=message.reference.resolved
+            reference_conversation= await Conversation.create(reference,False)
+            new_conversation.reference=reference_conversation
+        if save:
+            await new_conversation.save()
+        return new_conversation
     
-    async def add_conversation(self,conversation: Conversation):
-        self.conversations.append(conversation)
-        await self.save()
-        return self
-    
-    def serialize_object(self):
-        new_conversation=ConversationChannelDTO(dm=False,conversations=[])
-        if isinstance(self.origin,DMChannel):
-            new_conversation.dm=True
-            new_conversation.origin=self.origin.me.name
-        else:
-            new_conversation.origin=self.origin.name
+    @staticmethod
+    async def create_chatbot_conversation(sent_message : Message,content: str):
+        new_origin=Origin.create(sent_message.channel)
+        new_conversation=Conversation(id=sent_message.id,content=content,author="chatbot",origin=new_origin)
+        if sent_message.reference is not None:
+            reference=sent_message.reference.resolved
+            reference_conversation= await Conversation.create(reference,False)
+            new_conversation.reference=reference_conversation
+            
 
-        for conversation in self.conversations:
-            author_name=conversation.author.name
-
-            new_conversation.conversations.append(ConversationDTO(sender=author_name,content=conversation.content,timestamp=conversation.created_at.__str__()))
-        return new_conversation.model_dump_json()
-
+        await new_conversation.save()
+        return new_conversation
 
     
-
-        
-
-
+    
+    
     
 
 
@@ -120,9 +127,6 @@ class ConversationChannel(Document,CreatedAt):
 
 
 
-
-class UpdateConversation(ConversationChannel,UpdateAt):
-    pass
 
 
 
