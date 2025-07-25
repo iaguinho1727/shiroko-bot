@@ -1,6 +1,9 @@
+import io
+
 import discord
 import logging
 from app.llm import LLMService
+from app.pdf import ShirokoPDFReader
 from app.rvc import *
 from app.tts import *
 from app.database import Database
@@ -8,40 +11,60 @@ from app.schema import *
 from datetime import timedelta
 from discord.ext import commands
 import traceback
+from PyPDF2 import PdfReader
 import json
 import uuid
 from app.debug import bk,start_debug_session
-class ShirokoClient(commands.Bot):
+from app.voice import ShirokoVoiceService
+
+
+class DiscordBot(commands.Bot):
+    PDF_FILE_READ_LIMIT=10
     
-    def __init__(self, *, intents,logger : logging.Logger,llm : LLMService,db : Database,tts : OpenAITTSService, **options):
+    def __init__(self, *, intents, logger : logging.Logger, llm : LLMService,
+                 db : Database, shiroko_voice : ShirokoVoiceService,pdf_service : ShirokoPDFReader, **options):
         super().__init__(intents=intents,command_prefix='$', **options)
         self.logger=logger
         self.llm=llm
-        self.tts_service=tts
+        self.shiroko_voice=shiroko_voice
+        self.pdf_service=pdf_service
         self.db=db
      
+    async def _send_pdf_result(self,result : tuple[str,bytes] ,interaction : discord.Interaction):
+        for file_name, audio in result:
+            message_content = f'FILE: {file_name} \n'
+            await interaction.response.send_message(file=audio, content=message_content, ephemeral=True)
 
 
+    async def _convert_pdf_attachments_to_audio(self, messages_with_attachemnts,interaction : discord.Interaction):
+        for message in messages_with_attachemnts:
+            attachments = message.attachments
+            message_content = f"TRANSCRIBING LAST {attachments.__len__()} FILES:"
+            sent_message = await interaction.response.send_message(content=message_content, ephemeral=True)
+            result = await self.pdf_service.pdfs_to_audio(attachments)
+            # await Conversation.create_chatbot_conversation(sent_message,f"PAGE {page}:\n" + to_be_read_text)
+            await self._send_pdf_result(result, interaction)
 
     async def register_tree_commands(self):
 
         @self.tree.command(description='PING bot')
         async def ping(interaction : discord.Interaction):
             await interaction.response.send_message('PONG!')
-        self.logger.info('Registered all commands')
 
         @self.tree.command(description='Clear all bot conversations you had with it ( ⚠️ DANGEROUS! ⚠️ )')
         async def clear(interaction : discord.Interaction):
             async with interaction.user.typing():
-                Conversation.find(Conversation.user_id==interaction.user.id).delete_many()
-                interaction.response.send_message('Conversations deleted')
+                await Conversation.find(Conversation.user_id==interaction.user.id).delete_many()
+                await interaction.response.send_message('Conversations deleted')
 
         @self.tree.command(description="Make Shiroko join your voice channel")
         async def join(interaction: discord.Interaction):
                 # Check if user is in a voice channel
 
-            self.logger.info(f'Voice : {interaction.user.voice}')
-            if interaction.user.voice is None or interaction.user.voice.channel is None:
+            has_voice=hasattr(interaction.user,'voice')
+            is_in_voice_channel=isinstance(interaction.user,User) and has_voice  and  \
+                    interaction.user.voice is not None and interaction.user.voice.channel is not None
+            if not(is_in_voice_channel):
                 await interaction.response.send_message(
                     "❌ You must be in a voice channel first!",
                     ephemeral=True
@@ -79,11 +102,42 @@ class ShirokoClient(commands.Bot):
 
         @self.tree.command(description="Make Shiroko leave the voice channel")
         async def leave(interaction: discord.Interaction):
-            if interaction.guild.voice_client:
+            if interaction.guild is not None and interaction.guild.voice_client:
                 await interaction.guild.voice_client.disconnect()
                 await interaction.response.send_message("Disconnected.")
-            else:
-                await interaction.response.send_message("I'm not in a voice channel.")
+                return
+            
+            await interaction.response.send_message("I'm not in a voice channel.")
+
+
+        @self.tree.command(description='Transcribe PDF Files',name='read')
+        async def read_pdf(interaction : discord.Interaction):
+            last_messages = [m async for m in interaction.channel.history(limit=self.PDF_FILE_READ_LIMIT)]
+            messages_with_attachments=ShirokoPDFReader.filter_messages_with_attachments(last_messages)
+            if messages_with_attachments.__len__()==0:
+                await interaction.response.send_message(content='No PDF Files were provied')
+                return
+            attachments=ShirokoPDFReader.get_attachments_from_messages(messages_with_attachments)
+            attachments=ShirokoPDFReader.filter_pdf_attachments(attachments)
+            try:
+                async with interaction.channel.typing():
+
+                    message_content=f"TRANSCRIBING LAST {attachments.__len__()} FILES:"
+                    sent_message=await interaction.response.send_message(content=message_content, ephemeral=True)
+                    result=await self.pdf_service.pdfs_to_audio(attachments)
+                    #await Conversation.create_chatbot_conversation(sent_message,f"PAGE {page}:\n" + to_be_read_text)
+                    await self._send_pdf_result(result,interaction)
+
+            except Exception as e:
+                self.logger.critical(e)
+                await interaction.response.send_message(content="Failed to read the provided PDF files",ephemeral=True)
+
+
+
+
+
+                
+            
 
 
 
@@ -106,17 +160,15 @@ class ShirokoClient(commands.Bot):
             exit(1)
         self.logger.info('Shiroko Started')
 
-    async def _talk(self):
-        function_calls=await self.llm.prompt()
+    async def _take_action(self):
+        function_calls=await self.llm.prompt(await Conversation.all().to_list())
         if function_calls is None or function_calls.name.__contains__('nothing'):
             return False
         function_arguments=json.loads(function_calls.arguments)
         content=function_arguments.get('content')
         if content is None:
             return False
-        tts_audio=self.tts_service.tts(content)
-        async with AsyncRVCService(self.logger) as rvc:
-                    character_audio, mime_type= await rvc.convert_file(tts_audio)
+        character_audio=await self.shiroko_voice.talk(content)
         audio_file=discord.File(fp=io.BytesIO(character_audio),filename=f'{uuid.uuid4()}.wav')
         chosen_function=getattr(self,function_calls.name)
         self.logger.info(f'Calling {chosen_function.__name__} with arguments {function_arguments}')
@@ -153,12 +205,12 @@ class ShirokoClient(commands.Bot):
 
     
     async def on_message(self,message : discord.Message):
+        if message.author==self.user or message.content.strip().__len__()==0:
+            return
         try:
-            if message.author==self.user:
-                return
             await Conversation.create(message)
             async with message.channel.typing():
-                bot_response=await self._talk()
+                bot_response=await self._take_action()
                 if bot_response==False:
                     self.logger.info('Bot chose to do nothing')
                     return

@@ -17,6 +17,8 @@ import abc
 import io
 from datetime import timedelta
 
+from pydub import AudioSegment
+
 AudioType=t.Literal['rvc','tts']
 VoiceType=t.Literal['normal','rvc']
 
@@ -48,8 +50,8 @@ class AsyncRVCService():
         return response.text
     
     async def convert_file(self ,audio : bytes):
-        
-        response=await self.client.post('/convert_file',files={'file': audio},timeout=60*5)
+
+        response=await self.client.post('/convert_file',files={'file': audio},timeout=None)
         mime_type=response.headers.get('content-type')
  
         return (response.content,mime_type)

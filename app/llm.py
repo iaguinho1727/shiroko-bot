@@ -56,11 +56,10 @@ class LLMService(ChatGPT):
             self.tools=json.loads(content)
 
     
-    
 
     
-    async def prompt(self):
-        all_conversations=[ item.model_dump_json() for item in await Conversation.all().to_list()]
+    async def prompt(self,previous_conversations : t.List[Conversation]):
+        all_conversations=[ item.model_dump_json() for item in previous_conversations]
         messages=[
             {"role": "developer","content": self.system_prompt}
         ]
